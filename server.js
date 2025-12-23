@@ -116,7 +116,8 @@
 
 // app.listen(PORT, () => {
 //   console.log(`🚨 Panic API running on port ${PORT}`);
-// });import express from "express";
+// });
+import express from "express";
 import { v4 as uuid } from "uuid";
 
 const app = express();
