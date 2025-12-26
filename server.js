@@ -134,39 +134,54 @@ const CLEANUP_AGE = 5 * 60 * 1000;
 
 // CREATE PANIC
 app.post("/api/panic", (req, res) => {
-  const { deviceId, residentId, residentName, apartment, location } = req.body;
+  const {
+    deviceId,
+    residentName,
+    residentHouseNumber,
+    residentStreet
+  } = req.body;
 
-  if (!deviceId || !residentName || !apartment) {
+  if (!deviceId || !residentName || !residentHouseNumber || !residentStreet) {
     return res.status(400).json({
-      error: "deviceId, residentName, apartment are required"
+      error: "deviceId, residentName, residentHouseNumber, residentStreet are required"
     });
   }
 
   const panicId = uuid();
-  const now = new Date().toISOString();
+  const createdAt = new Date().toISOString();
 
   panicEvents.set(panicId, {
     panicId,
-    deviceId,
-    residentId: residentId || null,
     residentName,
-    apartment,
-    location: location || null,
+    residentHouseNumber,
+    residentStreet,
+    deviceId, // NEVER NULL
+    createdAt,
     status: "pending",
-    createdAt: now,
     deliveredAt: null,
     acknowledgedAt: null,
     autoAckTimer: null
   });
 
-  console.log(`🚨 NEW PANIC: ${residentName} (${apartment}) - ${panicId}`);
-  res.status(201).json({ success: true, panicId });
+  console.log(`🚨 NEW PANIC: ${panicId} from ${residentName} (${deviceId})`);
+  res.status(201).json({
+    success: true,
+    panic: {
+      panicId,
+      residentName,
+      residentHouseNumber,
+      residentStreet,
+      deviceId,
+      createdAt
+    }
+  });
 });
+
 
 // DEVICE POLL
 app.get("/api/device/panic", (req, res) => {
   const { deviceId } = req.query;
-  
+
   if (!deviceId) {
     return res.status(400).json({ error: "deviceId is required" });
   }
@@ -174,7 +189,11 @@ app.get("/api/device/panic", (req, res) => {
   cleanupOldPanics();
 
   const panic = [...panicEvents.values()]
-    .filter(p => p.deviceId === deviceId && (p.status === "pending" || p.status === "delivered"))
+    .filter(
+      p =>
+        p.deviceId === deviceId &&
+        (p.status === "pending" || p.status === "delivered")
+    )
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0];
 
   if (!panic) {
@@ -184,17 +203,19 @@ app.get("/api/device/panic", (req, res) => {
   if (panic.status === "pending") {
     panic.status = "delivered";
     panic.deliveredAt = new Date().toISOString();
-    console.log(`📤 DELIVERED: ${panic.panicId} to ${deviceId}`);
+    console.log(`📲 DELIVERED: ${panic.panicId} to ${deviceId}`);
     startAutoAckTimer(panic);
   }
 
+  // 🔥 PAYLOAD MATCHES PanicModel EXACTLY
   res.json({
     panic: true,
     event: {
       panicId: panic.panicId,
       residentName: panic.residentName,
-      apartment: panic.apartment,
-      location: panic.location,
+      residentHouseNumber: panic.residentHouseNumber,
+      residentStreet: panic.residentStreet,
+      deviceId: panic.deviceId, // NEVER NULL
       createdAt: panic.createdAt
     }
   });
@@ -205,20 +226,19 @@ app.post("/api/device/panic/ack", (req, res) => {
   const { panicId, deviceId } = req.body;
 
   if (!panicId || !deviceId) {
-    return res.status(400).json({ error: "panicId and deviceId are required" });
+    return res.status(400).json({
+      error: "panicId and deviceId are required"
+    });
   }
 
   const panic = panicEvents.get(panicId);
 
-  if (!panic) {
-    return res.status(404).json({ error: "panic not found" });
-  }
-
+  if (!panic) return res.status(404).json({ error: "panic not found" });
   if (panic.deviceId !== deviceId) {
     return res.status(403).json({ error: "device mismatch" });
   }
 
-  if (panic.autoAckTimer) {
+  if (panic.autoAckTimer){
     clearTimeout(panic.autoAckTimer);
     panic.autoAckTimer = null;
   }
@@ -226,9 +246,11 @@ app.post("/api/device/panic/ack", (req, res) => {
   panic.status = "acknowledged";
   panic.acknowledgedAt = new Date().toISOString();
 
-  console.log(`✅ ACKNOWLEDGED: ${panicId} by ${deviceId}`);
+  console.log(`✅ ACKNOWLEDGED: ${panic.panicId} by ${deviceId}`);
   res.json({ success: true });
+
 });
+;
 
 // LIST ALL PANICS
 app.get("/api/panic/list", (req, res) => {
