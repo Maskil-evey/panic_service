@@ -178,26 +178,21 @@ app.get("/api/device/panic", (req, res) => {
 
   cleanupOldPanics();
 
+  // Only find PENDING panics, not delivered ones
   const panic = [...panicEvents.values()]
-    .filter(
-      p =>
-        p.deviceId === deviceId &&
-        (p.status === "pending" || p.status === "delivered")
-    )
+    .filter(p => p.deviceId === deviceId && p.status === "pending")
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0];
 
   if (!panic) {
     return res.json({ panic: false });
   }
 
-  if (panic.status === "pending") {
-    panic.status = "delivered";
-    panic.deliveredAt = new Date().toISOString();
-    console.log(`📲 DELIVERED: ${panic.panicId} to ${deviceId}`);
-    startAutoAckTimer(panic);
-  }
+  // Mark as delivered and start timer
+  panic.status = "delivered";
+  panic.deliveredAt = new Date().toISOString();
+  console.log(`📲 DELIVERED: ${panic.panicId} to ${deviceId}`);
+  startAutoAckTimer(panic);
 
-  // 🔥 PAYLOAD MATCHES PanicModel EXACTLY
   res.json({
     panic: true,
     event: {
@@ -205,7 +200,7 @@ app.get("/api/device/panic", (req, res) => {
       residentName: panic.residentName,
       residentHouseNumber: panic.residentHouseNumber,
       residentStreet: panic.residentStreet,
-      deviceId: panic.deviceId, // NEVER NULL
+      deviceId: panic.deviceId,
       createdAt: panic.createdAt
     }
   });
@@ -247,7 +242,9 @@ app.get("/api/panic/list", (req, res) => {
   const panics = [...panicEvents.values()].map(p => ({
     panicId: p.panicId,
     residentName: p.residentName,
-    apartment: p.apartment,
+    residentHouseNumber: p.residentHouseNumber,
+    residentStreet: p.residentStreet,
+    deviceId: p.deviceId,
     status: p.status,
     createdAt: p.createdAt,
     deliveredAt: p.deliveredAt,

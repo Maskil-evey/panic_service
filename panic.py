@@ -219,31 +219,28 @@ def poll_main_backend():
         data = response.json()
 
         with state_lock:
-           if data.get("panic") is True:
-            event = data.get("event", {})
-            new_panic_id = event.get("panicId")
+            if data.get("panic") is True:
+                event = data.get("event", {})
+                new_panic_id = event.get("panicId")
 
-            is_new_panic = new_panic_id != LATEST_ALERT["panicId"]
+                # Only update if this is actually a NEW panic
+                if new_panic_id != LATEST_ALERT["panicId"]:
+                    LATEST_ALERT.update({
+                        "active": True,
+                        "panicId": new_panic_id,
+                        "resident_name": event.get("residentName"),
+                        "flat_number": event.get("residentHouseNumber"),
+                        "street": event.get("residentStreet"),
+                        "last_updated": event.get("createdAt"),
+                        "sent_to_device": False
+                    })
 
-            if is_new_panic:
-                LATEST_ALERT.update({
-                    "active": True,
-                    "panicId": new_panic_id,
-                    "resident_name": event.get("residentName"),
-                    "flat_number": event.get("residentHouseNumber"),
-                    "street": event.get("residentStreet"),
-                    "last_updated": event.get("createdAt"),
-                    "sent_to_device": False
-                })
-
-                print(
-                    f"🚨 NEW PANIC: {event.get('residentName')} | "
-                    f"{event.get('residentHouseNumber')} {event.get('residentStreet')}"
-                )
-
-
+                    print(
+                        f"🚨 NEW PANIC: {event.get('residentName')} | "
+                        f"{event.get('residentHouseNumber')} {event.get('residentStreet')}"
+                    )
             else:
-                # No active panic
+                # Only clear if we actually had an active panic
                 if LATEST_ALERT["active"]:
                     print("✅ Panic cleared - resetting local state")
                     LATEST_ALERT.update({
@@ -251,6 +248,7 @@ def poll_main_backend():
                         "panicId": None,
                         "resident_name": None,
                         "flat_number": None,
+                        "street": None,
                         "last_updated": datetime.now().isoformat(),
                         "sent_to_device": False
                     })
