@@ -164,17 +164,7 @@ app.post("/api/panic", (req, res) => {
   });
 
   console.log(`🚨 NEW PANIC: ${panicId} from ${residentName} (${deviceId})`);
-  res.status(201).json({
-    success: true,
-    panic: {
-      panicId,
-      residentName,
-      residentHouseNumber,
-      residentStreet,
-      deviceId,
-      createdAt
-    }
-  });
+  res.status(201).json({ success: true, panicId: panicId });
 });
 
 

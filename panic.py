@@ -204,9 +204,11 @@ LATEST_ALERT = {
     "panicId": None,
     "resident_name": None,
     "flat_number": None,
+    "street": None,
     "last_updated": None,
-    "sent_to_device": False  # Only send each alarm once
+    "sent_to_device": False
 }
+
 
 state_lock = threading.Lock()
 
@@ -217,22 +219,28 @@ def poll_main_backend():
         data = response.json()
 
         with state_lock:
-            if data.get("panic") == True:
-                event = data.get("event", {})
-                new_panic_id = event.get("panicId")
-                is_new_panic = new_panic_id != LATEST_ALERT["panicId"]
+           if data.get("panic") is True:
+            event = data.get("event", {})
+            new_panic_id = event.get("panicId")
 
-                if is_new_panic:
-                    # New panic detected
-                    LATEST_ALERT.update({
-                        "active": True,
-                        "panicId": new_panic_id,
-                        "resident_name": event.get("residentName", "Unknown"),
-                        "flat_number": event.get("apartment", "N/A"),
-                        "last_updated": datetime.now().isoformat(),
-                        "sent_to_device": False
-                    })
-                    print(f"🚨 NEW ALARM: {LATEST_ALERT['resident_name']} in {LATEST_ALERT['flat_number']} needs help!")
+            is_new_panic = new_panic_id != LATEST_ALERT["panicId"]
+
+            if is_new_panic:
+                LATEST_ALERT.update({
+                    "active": True,
+                    "panicId": new_panic_id,
+                    "resident_name": event.get("residentName"),
+                    "flat_number": event.get("residentHouseNumber"),
+                    "street": event.get("residentStreet"),
+                    "last_updated": event.get("createdAt"),
+                    "sent_to_device": False
+                })
+
+                print(
+                    f"🚨 NEW PANIC: {event.get('residentName')} | "
+                    f"{event.get('residentHouseNumber')} {event.get('residentStreet')}"
+                )
+
 
             else:
                 # No active panic
@@ -269,18 +277,23 @@ def check_alarm():
     with state_lock:
         if LATEST_ALERT["active"] and not LATEST_ALERT["sent_to_device"]:
             LATEST_ALERT["sent_to_device"] = True
+
             response_data = {
                 "active": True,
-                "resident": {
-                    "name": LATEST_ALERT["resident_name"],
-                    "flat": LATEST_ALERT["flat_number"]
-                },
-                "last_updated": LATEST_ALERT["last_updated"]
+                "panic": {
+                    "panicId": LATEST_ALERT["panicId"],
+                    "residentName": LATEST_ALERT["resident_name"],
+                    "residentHouseNumber": LATEST_ALERT["flat_number"],
+                    "residentStreet": LATEST_ALERT["street"],
+                    "lastUpdated": LATEST_ALERT["last_updated"]
+                }
             }
-            print(f"📤 Sending NEW alarm to device: {response_data}")
+
+            print(f"📤 Sending alarm to device → {response_data}")
             return jsonify(response_data), 200
-        else:
-            return jsonify({"active": False}), 200
+
+        return jsonify({"active": False}), 200
+
 
 @app.route("/acknowledge", methods=["POST"])
 def acknowledge():
