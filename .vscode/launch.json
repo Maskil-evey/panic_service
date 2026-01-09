@@ -12,6 +12,7 @@
       "program": "c:/Workspace/Node_apis/panic_api/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
+      
       "setupCommands": [
         {
           "description": "Enable pretty-printing for gdb",
