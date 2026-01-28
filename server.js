@@ -46,7 +46,7 @@ app.post("/api/panic", async (req, res) => {
     deviceId // This is important for the hardware
   } = req.body;
 
-  if (!uid ) {
+  if (!uid) {
     return res.status(400).json({
       error: "uid is required"
     });
@@ -87,7 +87,7 @@ app.post("/api/panic", async (req, res) => {
     createdAt: serverCreatedAt, // Use server time for consistency
     panicId,
     residentName,
-    address, 
+    address,
     phoneNumber,
     estateId,
     deviceId,
@@ -109,8 +109,8 @@ app.post("/api/panic", async (req, res) => {
     console.error('❌ Error saving to Firestore:', error);
   }
 
-  res.status(201).json({ 
-    success: true, 
+  res.status(201).json({
+    success: true,
     panicId: panicId,
     message: "Panic created and saved to database"
   });
@@ -138,13 +138,13 @@ app.get("/api/device/panic", async (req, res) => {
   // Mark as delivered and start timer
   panic.status = "delivered";
   panic.deliveredAt = new Date().toISOString();
-  
+
   // Update Firestore
   await updateFirestorePanic(panic.panicId, {
     status: "delivered",
     deliveredAt: panic.deliveredAt
   });
-  
+
   console.log(`📲 DELIVERED: ${panic.panicId} to ${deviceId}`);
   startAutoAckTimer(panic);
 
@@ -182,7 +182,7 @@ app.post("/api/device/panic/ack", async (req, res) => {
   // CRITICAL FIX: Reject if already acknowledged
   if (panic.status === "acknowledged") {
     console.log(`⚠️ IGNORING DUPLICATE ACK: ${panicId} already acknowledged by ${panic.acknowledgedBy}`);
-    return res.status(200).json({ 
+    return res.status(200).json({
       success: true,
       message: "Panic already acknowledged",
       acknowledgedBy: panic.acknowledgedBy
@@ -190,7 +190,7 @@ app.post("/api/device/panic/ack", async (req, res) => {
   }
 
   // Clear auto-ack timer if exists
-  if (panic.autoAckTimer){
+  if (panic.autoAckTimer) {
     clearTimeout(panic.autoAckTimer);
     panic.autoAckTimer = null;
   }
@@ -208,7 +208,7 @@ app.post("/api/device/panic/ack", async (req, res) => {
   });
 
   console.log(`✅ MANUALLY ACKNOWLEDGED: ${panic.panicId} by ${deviceId}`);
-  res.json({ 
+  res.json({
     success: true,
     acknowledgedBy: "device"
   });
@@ -226,14 +226,14 @@ function startAutoAckTimer(panic) {
       panic.status = "acknowledged";
       panic.acknowledgedAt = new Date().toISOString();
       panic.acknowledgedBy = "timeout";
-      
+
       // Update Firestore
       await updateFirestorePanic(panic.panicId, {
         status: "acknowledged",
         acknowledgedAt: panic.acknowledgedAt,
         acknowledgedBy: "timeout"
       });
-      
+
       console.log(`⏰ AUTO-ACKNOWLEDGED: ${panic.panicId} (30s timeout)`);
     }
   }, AUTO_ACK_TIMEOUT);
@@ -242,14 +242,14 @@ function startAutoAckTimer(panic) {
 // GET SINGLE PANIC DETAILS
 app.get("/api/panic/:panicId", async (req, res) => {
   const { panicId } = req.params;
-  
+
   try {
     const doc = await db.collection('panics').doc(panicId).get();
-    
+
     if (!doc.exists) {
       return res.status(404).json({ error: "panic not found" });
     }
-    
+
     res.json(doc.data());
   } catch (error) {
     console.error('Error fetching panic:', error);
@@ -261,14 +261,14 @@ app.get("/api/panic/:panicId", async (req, res) => {
 app.delete("/api/panic/:panicId", (req, res) => {
   const { panicId } = req.params;
   const panic = panicEvents.get(panicId);
-  
+
   if (panic && panic.autoAckTimer) {
     clearTimeout(panic.autoAckTimer);
   }
-  
+
   if (panicEvents.delete(panicId)) {
     console.log(`🗑️  DELETED from memory: ${panicId}`);
-    res.json({ 
+    res.json({
       success: true,
       message: "Panic removed from memory (still in Firestore for records)"
     });
@@ -280,7 +280,7 @@ app.delete("/api/panic/:panicId", (req, res) => {
 // Clean up old panics (from memory only)
 function cleanupOldPanics() {
   const now = Date.now();
-  
+
   for (const [id, panic] of panicEvents) {
     const age = now - new Date(panic.createdAt).getTime();
     if (age > CLEANUP_AGE) {
@@ -295,6 +295,54 @@ function cleanupOldPanics() {
 
 setInterval(cleanupOldPanics, 60 * 1000);
 
+// === DEVICE MANAGEMENT ENDPOINTS ===
+
+// Online threshold: 60 seconds
+const ONLINE_THRESHOLD = 60 * 1000;
+
+// DEVICE HEARTBEAT - ESP polls this every 30 seconds
+app.post("/api/device/heartbeat", async (req, res) => {
+  const { deviceId, batteryLevel } = req.body;
+
+  if (!deviceId) {
+    return res.status(400).json({ error: "deviceId is required" });
+  }
+
+  if (batteryLevel === undefined || batteryLevel === null) {
+    return res.status(400).json({ error: "batteryLevel is required" });
+  }
+
+  try {
+    const deviceRef = db.collection('devices').doc(deviceId);
+    const deviceDoc = await deviceRef.get();
+
+    if (!deviceDoc.exists) {
+      return res.status(404).json({
+        error: "Device not registered",
+        message: "Please register the device first"
+      });
+    }
+
+    const now = new Date().toISOString();
+    await deviceRef.update({
+      batteryLevel,
+      lastSeen: now
+    });
+
+    const deviceData = deviceDoc.data();
+    console.log(`💓 HEARTBEAT: ${deviceId} - Battery: ${batteryLevel}%`);
+
+    res.json({
+      success: true,
+      enabled: deviceData.enabled !== false, // Default to true if not set
+      message: "Heartbeat received"
+    });
+  } catch (error) {
+    console.error('❌ Error updating device heartbeat:', error);
+    res.status(500).json({ error: "Failed to update heartbeat" });
+  }
+});
+
 // HEALTH CHECK
 app.get("/health", async (_, res) => {
   try {
@@ -303,8 +351,8 @@ app.get("/health", async (_, res) => {
       test: true,
       timestamp: new Date().toISOString()
     }, { merge: true });
-    
-    res.json({ 
+
+    res.json({
       status: "ok",
       firestore: "connected",
       totalPanicsInMemory: panicEvents.size,
@@ -312,7 +360,7 @@ app.get("/health", async (_, res) => {
     });
   } catch (error) {
     console.error('Firestore health check failed:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       status: "error",
       firestore: "disconnected",
       error: error.message
