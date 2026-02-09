@@ -20,8 +20,6 @@ admin.initializeApp({
 const db = admin.firestore();
 const panicEvents = new Map();
 
-// Auto-acknowledge timeout: 30 seconds
-const AUTO_ACK_TIMEOUT = 30 * 1000;
 // Cleanup old panics: 5 minutes
 const CLEANUP_AGE = 5 * 60 * 1000;
 
@@ -46,7 +44,7 @@ app.post("/api/panic", async (req, res) => {
     deviceId // This is important for the hardware
   } = req.body;
 
-  if (!uid ) {
+  if (!uid) {
     return res.status(400).json({
       error: "uid is required"
     });
@@ -87,15 +85,14 @@ app.post("/api/panic", async (req, res) => {
     createdAt: serverCreatedAt, // Use server time for consistency
     panicId,
     residentName,
-    address, 
+    address,
     phoneNumber,
     estateId,
     deviceId,
     status: "pending",
     deliveredAt: null,
     acknowledgedAt: null,
-    acknowledgedBy: null, // 'device' or 'timeout'
-    autoAckTimer: null
+    acknowledgedBy: null // 'device' or 'timeout'
   };
 
   // Store in memory
@@ -109,8 +106,8 @@ app.post("/api/panic", async (req, res) => {
     console.error('❌ Error saving to Firestore:', error);
   }
 
-  res.status(201).json({ 
-    success: true, 
+  res.status(201).json({
+    success: true,
     panicId: panicId,
     message: "Panic created and saved to database"
   });
@@ -135,18 +132,17 @@ app.get("/api/device/panic", async (req, res) => {
     return res.json({ panic: false });
   }
 
-  // Mark as delivered and start timer
+  // Mark as delivered
   panic.status = "delivered";
   panic.deliveredAt = new Date().toISOString();
-  
+
   // Update Firestore
   await updateFirestorePanic(panic.panicId, {
     status: "delivered",
     deliveredAt: panic.deliveredAt
   });
-  
+
   console.log(`📲 DELIVERED: ${panic.panicId} to ${deviceId}`);
-  startAutoAckTimer(panic);
 
   res.json({
     panic: true,
@@ -164,7 +160,7 @@ app.get("/api/device/panic", async (req, res) => {
 // ACK PANIC
 // ACK PANIC - UPDATED VERSION
 app.post("/api/device/panic/ack", async (req, res) => {
-  const { panicId, deviceId } = req.body;
+  const { panicId, deviceId, acknowledgedBy } = req.body;
 
   if (!panicId || !deviceId) {
     return res.status(400).json({
@@ -179,77 +175,49 @@ app.post("/api/device/panic/ack", async (req, res) => {
     return res.status(403).json({ error: "device mismatch" });
   }
 
-  // CRITICAL FIX: Reject if already acknowledged
+  // Reject if already acknowledged
   if (panic.status === "acknowledged") {
     console.log(`⚠️ IGNORING DUPLICATE ACK: ${panicId} already acknowledged by ${panic.acknowledgedBy}`);
-    return res.status(200).json({ 
+    return res.status(200).json({
       success: true,
       message: "Panic already acknowledged",
       acknowledgedBy: panic.acknowledgedBy
     });
   }
 
-  // Clear auto-ack timer if exists
-  if (panic.autoAckTimer){
-    clearTimeout(panic.autoAckTimer);
-    panic.autoAckTimer = null;
-  }
+  // ESP sends acknowledgedBy: "device" (manual button press) or "timeout" (ESP auto-timer)
+  const ackSource = acknowledgedBy === "timeout" ? "timeout" : "device";
 
   // Update panic status
   panic.status = "acknowledged";
   panic.acknowledgedAt = new Date().toISOString();
-  panic.acknowledgedBy = "device";
+  panic.acknowledgedBy = ackSource;
 
   // Update Firestore
   await updateFirestorePanic(panicId, {
     status: "acknowledged",
     acknowledgedAt: panic.acknowledgedAt,
-    acknowledgedBy: "device"
+    acknowledgedBy: ackSource
   });
 
-  console.log(`✅ MANUALLY ACKNOWLEDGED: ${panic.panicId} by ${deviceId}`);
-  res.json({ 
+  console.log(`✅ ACKNOWLEDGED (${ackSource}): ${panic.panicId} by ${deviceId}`);
+  res.json({
     success: true,
-    acknowledgedBy: "device"
+    acknowledgedBy: ackSource
   });
 });
-
-// Start auto-acknowledge timer with Firestore update
-function startAutoAckTimer(panic) {
-  if (panic.autoAckTimer) {
-    clearTimeout(panic.autoAckTimer);
-  }
-
-  panic.autoAckTimer = setTimeout(async () => {
-    // Check if still delivered (not manually acknowledged)
-    if (panic.status === "delivered") {
-      panic.status = "acknowledged";
-      panic.acknowledgedAt = new Date().toISOString();
-      panic.acknowledgedBy = "timeout";
-      
-      // Update Firestore
-      await updateFirestorePanic(panic.panicId, {
-        status: "acknowledged",
-        acknowledgedAt: panic.acknowledgedAt,
-        acknowledgedBy: "timeout"
-      });
-      
-      console.log(`⏰ AUTO-ACKNOWLEDGED: ${panic.panicId} (30s timeout)`);
-    }
-  }, AUTO_ACK_TIMEOUT);
-}
 
 // GET SINGLE PANIC DETAILS
 app.get("/api/panic/:panicId", async (req, res) => {
   const { panicId } = req.params;
-  
+
   try {
     const doc = await db.collection('panics').doc(panicId).get();
-    
+
     if (!doc.exists) {
       return res.status(404).json({ error: "panic not found" });
     }
-    
+
     res.json(doc.data());
   } catch (error) {
     console.error('Error fetching panic:', error);
@@ -260,15 +228,9 @@ app.get("/api/panic/:panicId", async (req, res) => {
 // DELETE PANIC (from memory only, Firestore keeps history)
 app.delete("/api/panic/:panicId", (req, res) => {
   const { panicId } = req.params;
-  const panic = panicEvents.get(panicId);
-  
-  if (panic && panic.autoAckTimer) {
-    clearTimeout(panic.autoAckTimer);
-  }
-  
   if (panicEvents.delete(panicId)) {
     console.log(`🗑️  DELETED from memory: ${panicId}`);
-    res.json({ 
+    res.json({
       success: true,
       message: "Panic removed from memory (still in Firestore for records)"
     });
@@ -280,13 +242,10 @@ app.delete("/api/panic/:panicId", (req, res) => {
 // Clean up old panics (from memory only)
 function cleanupOldPanics() {
   const now = Date.now();
-  
+
   for (const [id, panic] of panicEvents) {
     const age = now - new Date(panic.createdAt).getTime();
     if (age > CLEANUP_AGE) {
-      if (panic.autoAckTimer) {
-        clearTimeout(panic.autoAckTimer);
-      }
       panicEvents.delete(id);
       console.log(`🧹 CLEANED UP from memory: ${id} (${Math.round(age / 60000)} minutes old)`);
     }
@@ -294,6 +253,54 @@ function cleanupOldPanics() {
 }
 
 setInterval(cleanupOldPanics, 60 * 1000);
+
+// === DEVICE MANAGEMENT ENDPOINTS ===
+
+// Online threshold: 60 seconds
+const ONLINE_THRESHOLD = 60 * 1000;
+
+// DEVICE HEARTBEAT - ESP polls this every 30 seconds
+app.post("/api/device/heartbeat", async (req, res) => {
+  const { deviceId, batteryLevel } = req.body;
+
+  if (!deviceId) {
+    return res.status(400).json({ error: "deviceId is required" });
+  }
+
+  if (batteryLevel === undefined || batteryLevel === null) {
+    return res.status(400).json({ error: "batteryLevel is required" });
+  }
+
+  try {
+    const deviceRef = db.collection('devices').doc(deviceId);
+    const deviceDoc = await deviceRef.get();
+
+    if (!deviceDoc.exists) {
+      return res.status(404).json({
+        error: "Device not registered",
+        message: "Please register the device first"
+      });
+    }
+
+    const now = new Date().toISOString();
+    await deviceRef.update({
+      batteryLevel,
+      lastSeen: now
+    });
+
+    const deviceData = deviceDoc.data();
+    console.log(`💓 HEARTBEAT: ${deviceId} - Battery: ${batteryLevel}%`);
+
+    res.json({
+      success: true,
+      enabled: deviceData.enabled !== false, // Default to true if not set
+      message: "Heartbeat received"
+    });
+  } catch (error) {
+    console.error('❌ Error updating device heartbeat:', error);
+    res.status(500).json({ error: "Failed to update heartbeat" });
+  }
+});
 
 // HEALTH CHECK
 app.get("/health", async (_, res) => {
@@ -303,8 +310,8 @@ app.get("/health", async (_, res) => {
       test: true,
       timestamp: new Date().toISOString()
     }, { merge: true });
-    
-    res.json({ 
+
+    res.json({
       status: "ok",
       firestore: "connected",
       totalPanicsInMemory: panicEvents.size,
@@ -312,7 +319,7 @@ app.get("/health", async (_, res) => {
     });
   } catch (error) {
     console.error('Firestore health check failed:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       status: "error",
       firestore: "disconnected",
       error: error.message
@@ -323,6 +330,5 @@ app.get("/health", async (_, res) => {
 app.listen(PORT, () => {
   console.log(`🚨 Panic API running on port ${PORT}`);
   console.log(`🔥 Firebase Admin initialized`);
-  console.log(`⏰ Auto-acknowledge timeout: 30 seconds`);
   console.log(`🧹 Cleanup age: 5 minutes (memory only)`);
 });
