@@ -169,7 +169,7 @@ app.post("/api/device/panic/ack", async (req, res) => {
   }
 
   // acknowledgedBy must be "manual" or "auto" (sent by ESP)
-  const ackSource = acknowledgedBy === "auto" ? "auto" : "manual";
+  const ackSource = acknowledgedBy === "auto" ? "timeout" : "device";
 
   const panic = panicEvents.get(panicId);
 
