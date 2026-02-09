@@ -185,8 +185,11 @@ app.post("/api/device/panic/ack", async (req, res) => {
     });
   }
 
-  // ESP sends acknowledgedBy: "device" (manual button press) or "timeout" (ESP auto-timer)
-  const ackSource = acknowledgedBy === "timeout" ? "timeout" : "device";
+  // Clear auto-ack timer if exists
+  if (panic.autoAckTimer){
+    clearTimeout(panic.autoAckTimer);
+    panic.autoAckTimer = null;
+  }
 
   // Update panic status
   panic.status = "acknowledged";
@@ -200,12 +203,37 @@ app.post("/api/device/panic/ack", async (req, res) => {
     acknowledgedBy: ackSource
   });
 
-  console.log(`✅ ACKNOWLEDGED (${ackSource}): ${panic.panicId} by ${deviceId}`);
-  res.json({
+  console.log(`✅ MANUALLY ACKNOWLEDGED: ${panic.panicId} by ${deviceId}`);
+  res.json({ 
     success: true,
     acknowledgedBy: ackSource
   });
 });
+
+// Start auto-acknowledge timer with Firestore update
+function startAutoAckTimer(panic) {
+  if (panic.autoAckTimer) {
+    clearTimeout(panic.autoAckTimer);
+  }
+
+  panic.autoAckTimer = setTimeout(async () => {
+    // Check if still delivered (not manually acknowledged)
+    if (panic.status === "delivered") {
+      panic.status = "acknowledged";
+      panic.acknowledgedAt = new Date().toISOString();
+      panic.acknowledgedBy = "timeout";
+      
+      // Update Firestore
+      await updateFirestorePanic(panic.panicId, {
+        status: "acknowledged",
+        acknowledgedAt: panic.acknowledgedAt,
+        acknowledgedBy: "timeout"
+      });
+      
+      console.log(`⏰ AUTO-ACKNOWLEDGED: ${panic.panicId} (30s timeout)`);
+    }
+  }, AUTO_ACK_TIMEOUT);
+}
 
 // GET SINGLE PANIC DETAILS
 app.get("/api/panic/:panicId", async (req, res) => {
@@ -228,6 +256,12 @@ app.get("/api/panic/:panicId", async (req, res) => {
 // DELETE PANIC (from memory only, Firestore keeps history)
 app.delete("/api/panic/:panicId", (req, res) => {
   const { panicId } = req.params;
+  const panic = panicEvents.get(panicId);
+  
+  if (panic && panic.autoAckTimer) {
+    clearTimeout(panic.autoAckTimer);
+  }
+  
   if (panicEvents.delete(panicId)) {
     console.log(`🗑️  DELETED from memory: ${panicId}`);
     res.json({
