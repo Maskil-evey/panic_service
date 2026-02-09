@@ -168,6 +168,9 @@ app.post("/api/device/panic/ack", async (req, res) => {
     });
   }
 
+  // acknowledgedBy must be "manual" or "auto" (sent by ESP)
+  const ackSource = acknowledgedBy === "auto" ? "auto" : "manual";
+
   const panic = panicEvents.get(panicId);
 
   if (!panic) return res.status(404).json({ error: "panic not found" });
@@ -185,12 +188,6 @@ app.post("/api/device/panic/ack", async (req, res) => {
     });
   }
 
-  // Clear auto-ack timer if exists
-  if (panic.autoAckTimer){
-    clearTimeout(panic.autoAckTimer);
-    panic.autoAckTimer = null;
-  }
-
   // Update panic status
   panic.status = "acknowledged";
   panic.acknowledgedAt = new Date().toISOString();
@@ -203,37 +200,16 @@ app.post("/api/device/panic/ack", async (req, res) => {
     acknowledgedBy: ackSource
   });
 
-  console.log(`✅ MANUALLY ACKNOWLEDGED: ${panic.panicId} by ${deviceId}`);
+  const ackLabel = ackSource === "auto" ? "AUTO" : "MANUALLY";
+  console.log(`✅ ${ackLabel} ACKNOWLEDGED: ${panic.panicId} by ${deviceId}`);
   res.json({ 
     success: true,
-    acknowledgedBy: ackSource
+    acknowledgedBy: ackSource,
+    message: ackSource === "auto"
+      ? "Panic auto-acknowledged by device timer"
+      : "Panic manually acknowledged by device"
   });
 });
-
-// Start auto-acknowledge timer with Firestore update
-function startAutoAckTimer(panic) {
-  if (panic.autoAckTimer) {
-    clearTimeout(panic.autoAckTimer);
-  }
-
-  panic.autoAckTimer = setTimeout(async () => {
-    // Check if still delivered (not manually acknowledged)
-    if (panic.status === "delivered") {
-      panic.status = "acknowledged";
-      panic.acknowledgedAt = new Date().toISOString();
-      panic.acknowledgedBy = "timeout";
-      
-      // Update Firestore
-      await updateFirestorePanic(panic.panicId, {
-        status: "acknowledged",
-        acknowledgedAt: panic.acknowledgedAt,
-        acknowledgedBy: "timeout"
-      });
-      
-      console.log(`⏰ AUTO-ACKNOWLEDGED: ${panic.panicId} (30s timeout)`);
-    }
-  }, AUTO_ACK_TIMEOUT);
-}
 
 // GET SINGLE PANIC DETAILS
 app.get("/api/panic/:panicId", async (req, res) => {
@@ -256,11 +232,6 @@ app.get("/api/panic/:panicId", async (req, res) => {
 // DELETE PANIC (from memory only, Firestore keeps history)
 app.delete("/api/panic/:panicId", (req, res) => {
   const { panicId } = req.params;
-  const panic = panicEvents.get(panicId);
-  
-  if (panic && panic.autoAckTimer) {
-    clearTimeout(panic.autoAckTimer);
-  }
   
   if (panicEvents.delete(panicId)) {
     console.log(`🗑️  DELETED from memory: ${panicId}`);
