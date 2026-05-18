@@ -200,14 +200,16 @@ app.post("/api/device/panic/ack", async (req, res) => {
     acknowledgedBy: ackSource
   });
 
-  const ackLabel = ackSource === "auto" ? "AUTO" : "MANUALLY";
+  const ackLabel = ackSource === "auto" ? "AUTO" : ackSource === "operator" ? "SECURITY OPERATOR" : "MANUALLY";
   console.log(`✅ ${ackLabel} ACKNOWLEDGED: ${panic.panicId} by ${deviceId}`);
   res.json({ 
     success: true,
     acknowledgedBy: ackSource,
     message: ackSource === "auto"
       ? "Panic auto-acknowledged by device timer"
-      : "Panic manually acknowledged by device"
+      : ackSource === "operator"
+        ? "Panic manually acknowledged by security operator"
+        : "Panic manually acknowledged by device"
   });
 });
 
