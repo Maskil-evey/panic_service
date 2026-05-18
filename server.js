@@ -2,27 +2,6 @@ import express from "express";
 import { v4 as uuid } from "uuid";
 import admin from "firebase-admin";
 import { createRequire } from "module";
-import mqtt from "async-mqtt";
-
-
-const MQTT_HOST = process.env.MQTT_HOST || "5c7f22f99c7f4b3ab81f843afcd67122.s1.eu.hivemq.cloud";
-const MQTT_USER = process.env.MQTT_USER || "FILTER";
-const MQTT_PASS = process.env.MQTT_PASS || "Filter123";
-let mqttClient = null;
-
-async function connectMQTT() {
-  try {
-    mqttClient = await mqtt.connect(`mqtts://${MQTT_HOST}:8883`, {
-      username: MQTT_USER,
-      password: MQTT_PASS,
-      rejectUnauthorized: false, // For testing; use proper CA in production
-    });
-    console.log("✅ MQTT Connected to HiveMQ");
-  } catch (err) {
-    console.error("MQTT connection failed:", err);
-  }
-}
-connectMQTT();
 
 const require = createRequire(import.meta.url);
 const serviceAccount = require("/etc/secrets/serviceAccountKey.json");
@@ -127,10 +106,6 @@ app.post("/api/panic", async (req, res) => {
     console.error('❌ Error saving to Firestore:', error);
   }
 
-  if (mqttClient && mqttClient.connected) {
-  await mqttClient.publish("panic/event", JSON.stringify(panicData), { qos: 1 });
-}
-
   res.status(201).json({
     success: true,
     panicId: panicId,
@@ -149,8 +124,8 @@ app.get("/api/device/panic", async (req, res) => {
   cleanupOldPanics();
 
   // Only find PENDING panics for this device
-const panic = [...panicEvents.values()]
-    .filter(p => p.deviceId === deviceId && (p.status === "pending" || p.status === "delivered"))
+  const panic = [...panicEvents.values()]
+    .filter(p => p.deviceId === deviceId && p.status === "pending")
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0];
 
   if (!panic) {
