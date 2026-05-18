@@ -124,8 +124,8 @@ app.get("/api/device/panic", async (req, res) => {
   cleanupOldPanics();
 
   // Only find PENDING panics for this device
-  const panic = [...panicEvents.values()]
-    .filter(p => p.deviceId === deviceId && p.status === "pending")
+const panic = [...panicEvents.values()]
+    .filter(p => p.deviceId === deviceId && (p.status === "pending" || p.status === "delivered"))
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0];
 
   if (!panic) {
