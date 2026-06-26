@@ -5,6 +5,7 @@ import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
 const serviceAccount = require("/etc/secrets/serviceAccountKey.json");
+// const serviceAccount = require("./serviceaccount.json");
 
 
 const app = express();
@@ -74,6 +75,8 @@ app.post("/api/panic", async (req, res) => {
       error: "estateId is required"
     });
   }
+  // log body as json
+  console.log("📢 NEW PANIC REQUEST:", JSON.stringify(req.body, null, 2));
 
 
   // Generate a new panic ID
